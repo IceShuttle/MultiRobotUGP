@@ -11,8 +11,6 @@ from std_srvs.srv import Trigger
 
 import pygame
 import threading
-import sys
-import math
 
 class MapVisualizer(Node):
 
@@ -38,7 +36,7 @@ class MapVisualizer(Node):
         self.selected_robot = 0
         self.map_data = None
         self.map_info = None
-        self.cell_size = 25  # pixels per cell (2.5x bigger)
+        self.cell_size = 25
         self.screen = None
         self.clock = None
         self.running = False
@@ -46,6 +44,43 @@ class MapVisualizer(Node):
         self.fire_positions = []
         self.robot_positions = []
         self.robot_destroyed = []
+        self.images = {}
+
+    def create_images(self):
+        size = self.cell_size
+        half = size // 2
+
+        robot_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.circle(robot_surf, (50, 200, 50), (half, half), half - 2)
+        pygame.draw.circle(robot_surf, (30, 150, 30), (half, half), half - 2)
+        pygame.draw.circle(robot_surf, (100, 255, 100), (half - 4, half - 4), 4)
+        self.images['robot'] = robot_surf
+
+        robot_destroyed_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.circle(robot_destroyed_surf, (128, 128, 128), (half, half), half - 2)
+        pygame.draw.line(robot_destroyed_surf, (80, 80, 80), (4, 4), (size-4, size-4), 2)
+        pygame.draw.line(robot_destroyed_surf, (80, 80, 80), (size-4, 4), (4, size-4), 2)
+        self.images['robot_destroyed'] = robot_destroyed_surf
+
+        human_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.circle(human_surf, (0, 100, 255), (half, half - 4), 6)
+        pygame.draw.ellipse(human_surf, (0, 80, 200), (half - 6, half + 2, 12, 14))
+        pygame.draw.line(human_surf, (0, 80, 200), (half - 4, half + 8), (half - 8, half + 16), 3)
+        pygame.draw.line(human_surf, (0, 80, 200), (half + 4, half + 8), (half + 8, half + 16), 3)
+        self.images['human'] = human_surf
+
+        fire_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.rect(fire_surf, (255, 50, 0), (2, 2, size-4, size-4))
+        pygame.draw.rect(fire_surf, (255, 150, 0), (4, 4, size-8, size-8))
+        pygame.draw.circle(fire_surf, (255, 255, 100), (half, half), 5)
+        self.images['fire'] = fire_surf
+
+        floor_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+        floor_surf.fill((40, 40, 50))
+        for i in range(0, size, 6):
+            pygame.draw.line(floor_surf, (50, 50, 60), (i, 0), (i, size))
+            pygame.draw.line(floor_surf, (50, 50, 60), (0, i), (size, i))
+        self.images['floor'] = floor_surf
 
     def map_callback(self, msg):
         self.map_data = msg.data
@@ -67,7 +102,6 @@ class MapVisualizer(Node):
                 self.fire_positions.append((x, y))
             elif marker.ns == 'robots':
                 self.robot_positions.append((x, y))
-                # Check if gray color (destroyed)
                 destroyed = (marker.color.r == 0.5 and marker.color.g == 0.5 and marker.color.b == 0.5)
                 self.robot_destroyed.append(destroyed)
         self.get_logger().debug(f'Updated entities: {len(self.human_positions)}H, {len(self.fire_positions)}F, {len(self.robot_positions)}R')
@@ -108,6 +142,7 @@ class MapVisualizer(Node):
         try:
             pygame.init()
             pygame.font.init()
+            self.create_images()
             self.panel_width = 300
             w_px = self.map_info.width * self.cell_size + self.panel_width
             h_px = self.map_info.height * self.cell_size
@@ -160,43 +195,24 @@ class MapVisualizer(Node):
                 rclpy.spin_once(self, timeout_sec=0.01)
 
                 if self.map_data and self.map_info:
-                    self.screen.fill((255, 255, 255))
-                    # Draw occupied (black)
                     for y in range(self.map_info.height):
                         for x in range(self.map_info.width):
+                            px, py = x * self.cell_size, y * self.cell_size
                             idx = y * self.map_info.width + x
                             if idx < len(self.map_data) and self.map_data[idx] > 50:
-                                pygame.draw.rect(self.screen, (0, 0, 0),
-                                                 (x * self.cell_size, y * self.cell_size,
-                                                  self.cell_size, self.cell_size))
-                    # Humans (blue)
+                                pygame.draw.rect(self.screen, (20, 20, 20), (px, py, self.cell_size, self.cell_size))
+                            else:
+                                self.screen.blit(self.images['floor'], (px, py))
+
                     for x, y in self.human_positions:
-                        pygame.draw.circle(self.screen, (0, 100, 255),
-                                           (x * self.cell_size + self.cell_size//2,
-                                            y * self.cell_size + self.cell_size//2), self.cell_size//2 - 2)
-                    # Fires (red rectangles)
+                        self.screen.blit(self.images['human'], (x * self.cell_size, y * self.cell_size))
+
                     for x, y in self.fire_positions:
-                        pygame.draw.rect(self.screen, (255, 50, 0),
-                                         (x * self.cell_size + 2, y * self.cell_size + 2,
-                                          self.cell_size - 4, self.cell_size - 4))
-                    # Robots (green circles, gray if destroyed)
+                        self.screen.blit(self.images['fire'], (x * self.cell_size, y * self.cell_size))
+
                     for i, (x, y) in enumerate(self.robot_positions):
-                        color = (128, 128, 128) if self.robot_destroyed[i] else (50, 255, 50)
-                        pygame.draw.circle(self.screen, color,
-                                           (x * self.cell_size + self.cell_size//2,
-                                            y * self.cell_size + self.cell_size//2), self.cell_size//2 - 2)
-                    # Rescue point (large green arrow)
-                    if hasattr(self, 'rescue_pos') and self.rescue_pos:
-                        x, y = self.rescue_pos
-                        cx = x * self.cell_size + self.cell_size // 2
-                        cy = y * self.cell_size + self.cell_size // 2
-                        points = [
-                            (cx, cy - 18),
-                            (cx - 15, cy + 15),
-                            (cx + 15, cy + 15)
-                        ]
-                        pygame.draw.polygon(self.screen, (0, 255, 0), points)
-                        pygame.draw.polygon(self.screen, (0, 0, 0), points, width=4)  # border
+                        img = self.images['robot_destroyed'] if self.robot_destroyed[i] else self.images['robot']
+                        self.screen.blit(img, (x * self.cell_size, y * self.cell_size))
 
                 # Draw control panel on right
                 panel_x = self.map_info.width * self.cell_size

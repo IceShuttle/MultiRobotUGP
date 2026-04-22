@@ -14,6 +14,8 @@ import random
 class EntitySim(Node):
     def __init__(self):
         super().__init__('entity_sim')
+        self.declare_parameter('num_humans', 5)
+        self.num_humans = self.get_parameter('num_humans').value
         self.subscription = self.create_subscription(
             OccupancyGrid, '/map', self.map_callback, 10)
         self.entity_pub = self.create_publisher(MarkerArray, '/entities', 10)
@@ -24,10 +26,9 @@ class EntitySim(Node):
         self.human_positions = []
         self.fire_positions = []
         self.robot_positions = []
-        self.rescue_pos = None
         self.carrying = [False] * 4
         self.destroyed = [False] * 4
-        self.get_logger().info('EntitySim started. Waiting for map...')
+        self.get_logger().info(f'EntitySim started with {self.num_humans} humans. Waiting for map...')
 
     def map_callback(self, msg):
         if self.map_info is not None:
@@ -49,18 +50,17 @@ class EntitySim(Node):
 
         # Scatter humans and fires in non-edge
         random.shuffle(non_edge_cells)
-        self.human_positions = non_edge_cells[:5]   # 5 humans
-        self.fire_positions = non_edge_cells[5:8]   # 3 fires
+        self.human_positions = non_edge_cells[:self.num_humans]
+        self.fire_positions = non_edge_cells[self.num_humans:self.num_humans+3]   # 3 fires
 
-        # Robots at edges, or non-edge if not enough
+        # Robots at edges (exclude fires), or non-edge if not enough
+        edge_cells = [cell for cell in edge_cells if cell not in self.fire_positions]
         random.shuffle(edge_cells)
         self.robot_positions = edge_cells[:4]
         if len(self.robot_positions) < 4:
             needed = 4 - len(self.robot_positions)
+            non_edge_cells = [cell for cell in non_edge_cells if cell not in self.fire_positions]
             self.robot_positions += non_edge_cells[8:8+needed]
-
-        # Rescue at hardcoded exit (14,7)
-        self.rescue_pos = (14, 7) if (14, 7) in self.free_cells else random.choice(self.free_cells)
 
         self.get_logger().info(f'Placed {len(self.human_positions)} humans, {len(self.fire_positions)} fires, {len(self.robot_positions)} robots on free cells')
 
@@ -151,25 +151,6 @@ class EntitySim(Node):
                 marker.color = ColorRGBA(r=0.0, g=0.8, b=0.0, a=0.9)  # green
             markers.markers.append(marker)
 
-        # Rescue point - green arrow
-        if self.rescue_pos:
-            marker = Marker()
-            marker.header.frame_id = 'map'
-            marker.header.stamp = timestamp
-            marker.ns = 'rescue'
-            marker.id = 0
-            marker.type = Marker.ARROW
-            marker.action = Marker.ADD
-            marker.pose.position.x = self.rescue_pos[0] * 0.05 + 0.025
-            marker.pose.position.y = self.rescue_pos[1] * 0.05 + 0.025
-            marker.pose.position.z = 0.2
-            marker.pose.orientation.w = 1.0  # pointing up, but arrow points in direction
-            marker.scale.x = 0.5  # shaft
-            marker.scale.y = 0.1  # head
-            marker.scale.z = 0.1
-            marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.9)
-            markers.markers.append(marker)
-
         self.entity_pub.publish(markers)
 
     def move_callback(self, msg, id):
@@ -239,21 +220,24 @@ class EntitySim(Node):
         if self.destroyed[id] or id >= len(self.robot_positions) or not self.carrying[id]:
             return res
         pos = self.robot_positions[id]
-        # Allow drop at current position (even if other conditions)
-        if pos not in self.human_positions and pos not in self.fire_positions:
-            if pos == self.rescue_pos:
-                # Rescue the human
-                self.carrying[id] = False
-                res.success = True
-                self.get_logger().info(f'Robot {id} rescued a person at {pos}')
-                self.log_pub.publish(StringMsg(data=f'Robot {id} rescued a person'))
-            else:
+        # Check if on empty edge cell (exit)
+        idx = pos[1] * self.map_info.width + pos[0]
+        is_edge = (pos[0] == 0 or pos[0] == self.map_info.width-1 or pos[1] == 0 or pos[1] == self.map_info.height-1)
+        if is_edge and self.map_data[idx] <= 0 and pos not in self.human_positions and pos not in self.fire_positions:
+            # Rescue the human at exit
+            self.carrying[id] = False
+            res.success = True
+            self.get_logger().info(f'Robot {id} rescued a person at exit {pos}')
+            self.log_pub.publish(StringMsg(data=f'Robot {id} rescued a person'))
+        else:
+            # Normal drop (not at exit)
+            if pos not in self.human_positions and pos not in self.fire_positions:
                 self.human_positions.append(pos)
                 self.carrying[id] = False
                 res.success = True
                 self.get_logger().info(f'Robot {id} dropped human at {pos}')
                 self.log_pub.publish(StringMsg(data=f'Robot {id} dropped a person'))
-            self.publish_entities()
+        self.publish_entities()
         return res
 
     def destroy_callback(self, req, res, id):

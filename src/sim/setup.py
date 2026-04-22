@@ -27,6 +27,7 @@ setup(
             'map_publisher = sim.map_publisher:main',
             'map_visualizer = sim.map_visualizer:main',
             'entity_sim = sim.entity_sim:main',
+            'solver = sim.solver:main',
         ],
     },
 )
