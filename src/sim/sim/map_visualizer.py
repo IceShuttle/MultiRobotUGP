@@ -45,21 +45,31 @@ class MapVisualizer(Node):
         self.robot_positions = []
         self.robot_destroyed = []
         self.images = {}
+        self.robot_colors = [
+            ((0, 200, 50), (50, 200, 50), (100, 255, 100)),    # 0: green
+            ((0, 125, 200), (0, 100, 200), (100, 150, 255)),   # 1: blue
+            ((200, 125, 0), (200, 100, 0), (255, 200, 50)),   # 2: orange
+            ((200, 0, 200), (150, 0, 150), (255, 100, 255)),   # 3: magenta
+        ]
+        self.destroyed_color = ((128, 128, 128), (100, 100, 100), (150, 150, 150))
 
     def create_images(self):
         size = self.cell_size
         half = size // 2
 
-        robot_surf = pygame.Surface((size, size), pygame.SRCALPHA)
-        pygame.draw.circle(robot_surf, (50, 200, 50), (half, half), half - 2)
-        pygame.draw.circle(robot_surf, (30, 150, 30), (half, half), half - 2)
-        pygame.draw.circle(robot_surf, (100, 255, 100), (half - 4, half - 4), 4)
-        self.images['robot'] = robot_surf
+        for rid in range(4):
+            outer, inner, highlight = self.robot_colors[rid]
+            robot_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            pygame.draw.circle(robot_surf, outer, (half, half), half - 2)
+            pygame.draw.circle(robot_surf, inner, (half, half), half - 2)
+            pygame.draw.circle(robot_surf, highlight, (half - 4, half - 4), 4)
+            self.images[f'robot_{rid}'] = robot_surf
 
         robot_destroyed_surf = pygame.Surface((size, size), pygame.SRCALPHA)
-        pygame.draw.circle(robot_destroyed_surf, (128, 128, 128), (half, half), half - 2)
-        pygame.draw.line(robot_destroyed_surf, (80, 80, 80), (4, 4), (size-4, size-4), 2)
-        pygame.draw.line(robot_destroyed_surf, (80, 80, 80), (size-4, 4), (4, size-4), 2)
+        outer, inner, highlight = self.destroyed_color
+        pygame.draw.circle(robot_destroyed_surf, outer, (half, half), half - 2)
+        pygame.draw.line(robot_destroyed_surf, inner, (4, 4), (size-4, size-4), 2)
+        pygame.draw.line(robot_destroyed_surf, inner, (size-4, 4), (4, size-4), 2)
         self.images['robot_destroyed'] = robot_destroyed_surf
 
         human_surf = pygame.Surface((size, size), pygame.SRCALPHA)
@@ -143,7 +153,7 @@ class MapVisualizer(Node):
             pygame.init()
             pygame.font.init()
             self.create_images()
-            self.panel_width = 300
+            self.panel_width = 400
             w_px = self.map_info.width * self.cell_size + self.panel_width
             h_px = self.map_info.height * self.cell_size
             self.screen = pygame.display.set_mode((w_px, h_px))
@@ -211,8 +221,41 @@ class MapVisualizer(Node):
                         self.screen.blit(self.images['fire'], (x * self.cell_size, y * self.cell_size))
 
                     for i, (x, y) in enumerate(self.robot_positions):
-                        img = self.images['robot_destroyed'] if self.robot_destroyed[i] else self.images['robot']
+                        if i < len(self.robot_destroyed) and self.robot_destroyed[i]:
+                            img = self.images['robot_destroyed']
+                        else:
+                            img = self.images[f'robot_{i}']
                         self.screen.blit(img, (x * self.cell_size, y * self.cell_size))
+
+                # Draw legend at bottom-left of map area
+                legend_y = h_px - 20
+                # Draw dark background for legend
+                legend_w = 400
+                pygame.draw.rect(self.screen, (30, 30, 40), (0, h_px - 55, legend_w, 50))
+                legend_items = [
+                    ('Human', self.images['human']),
+                    ('Fire', self.images['fire']),
+                ]
+                legend_x = 10
+                for label, icon in legend_items:
+                    self.screen.blit(icon, (legend_x, legend_y - 20))
+                    text = self.font.render(label, True, (200, 200, 200))
+                    self.screen.blit(text, (legend_x + self.cell_size, legend_y - 15))
+                    legend_x += self.cell_size + 60
+
+                # Add robot legend entries
+                for i in range(min(len(self.robot_positions), 4)):
+                    is_destroyed = i < len(self.robot_destroyed) and self.robot_destroyed[i]
+                    if is_destroyed:
+                        robot_label = f'R{i}(X)'
+                        robot_img = self.images['robot_destroyed']
+                    else:
+                        robot_label = f'R{i}'
+                        robot_img = self.images[f'robot_{i}']
+                    self.screen.blit(robot_img, (legend_x, legend_y - 20))
+                    text = self.font.render(robot_label, True, (200, 200, 200))
+                    self.screen.blit(text, (legend_x + self.cell_size, legend_y - 15))
+                    legend_x += self.cell_size + 60
 
                 # Draw control panel on right
                 panel_x = self.map_info.width * self.cell_size
@@ -226,18 +269,18 @@ class MapVisualizer(Node):
                     pygame.draw.rect(self.screen, (150, 150, 150), (button_area_x, button_y, 140, 40))
                     text = self.font.render(f'Destroy Robot {i}', True, (0, 0, 0))
                     self.screen.blit(text, (button_area_x + 10, button_y + 10))
-                # Right: Action log (140px)
-                log_area_x = panel_x + 160
+                # Right: Action log (200px)
+                log_area_x = panel_x + 180
                 pygame.draw.line(self.screen, (0,0,0), (log_area_x - 10, 0), (log_area_x - 10, h_px))
                 log_title = self.font.render('Action Log:', True, (0, 0, 0))
                 self.screen.blit(log_title, (log_area_x, 10))
                 log_y = 35
-                start_idx = max(0, len(self.action_log) - 12)
+                start_idx = max(0, len(self.action_log) - 14)
                 for log_entry in self.action_log[start_idx:]:
-                    text = self.font.render(log_entry[:20], True, (0, 0, 0))  # truncate for width
+                    text = self.font.render(log_entry[:45], True, (0, 0, 0))
                     self.screen.blit(text, (log_area_x, log_y))
-                    log_y += 18
-                    if log_y > h_px - 20:
+                    log_y += 20
+                    if log_y > h_px - 30:
                         break
 
                 pygame.display.flip()

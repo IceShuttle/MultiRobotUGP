@@ -129,7 +129,13 @@ class EntitySim(Node):
             marker.color = ColorRGBA(r=1.0, g=0.2, b=0.0, a=0.9)
             markers.markers.append(marker)
 
-        # Robots - green cubes (gray if destroyed)
+        # Robots - colored cubes (gray if destroyed)
+        robot_colors = [
+            ColorRGBA(r=0.0, g=0.8, b=0.0, a=0.9),   # 0: green
+            ColorRGBA(r=0.0, g=0.5, b=0.8, a=0.9),   # 1: blue
+            ColorRGBA(r=0.8, g=0.5, b=0.0, a=0.9),   # 2: orange
+            ColorRGBA(r=0.8, g=0.0, b=0.8, a=0.9),   # 3: magenta
+        ]
         for i, (x, y) in enumerate(self.robot_positions):
             marker = Marker()
             marker.header.frame_id = 'map'
@@ -148,7 +154,7 @@ class EntitySim(Node):
             if self.destroyed[i]:
                 marker.color = ColorRGBA(r=0.5, g=0.5, b=0.5, a=0.9)  # gray
             else:
-                marker.color = ColorRGBA(r=0.0, g=0.8, b=0.0, a=0.9)  # green
+                marker.color = robot_colors[i]
             markers.markers.append(marker)
 
         self.entity_pub.publish(markers)
