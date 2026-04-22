@@ -6,7 +6,8 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
+from std_srvs.srv import Trigger
 
 import random
 
@@ -21,6 +22,8 @@ class EntitySim(Node):
         self.free_cells = []
         self.human_positions = []
         self.fire_positions = []
+        self.robot_positions = []
+        self.carrying = [False] * 4
         self.get_logger().info('EntitySim started. Waiting for map...')
 
     def map_callback(self, msg):
@@ -44,8 +47,25 @@ class EntitySim(Node):
         random.shuffle(self.free_cells)
         self.human_positions = self.free_cells[:5]   # 5 humans
         self.fire_positions = self.free_cells[5:8]   # 3 fires
+        self.robot_positions = self.free_cells[8:12] # 4 robots
 
-        self.get_logger().info(f'Placed {len(self.human_positions)} humans and {len(self.fire_positions)} fires on free cells')
+        self.get_logger().info(f'Placed {len(self.human_positions)} humans, {len(self.fire_positions)} fires, {len(self.robot_positions)} robots on free cells')
+
+        # Create subscribers and services for each robot
+        for robot_id in range(4):
+            self.create_subscription(
+                String, f'/robot{robot_id}/move',
+                lambda msg, rid=robot_id: self.move_callback(msg, rid), 10)
+            self.create_service(
+                Trigger, f'/robot{robot_id}/pick',
+                lambda req, res, rid=robot_id: self.pick_callback(req, res, rid))
+            self.create_service(
+                Trigger, f'/robot{robot_id}/remove_fire',
+                lambda req, res, rid=robot_id: self.remove_fire_callback(req, res, rid))
+            self.create_service(
+                Trigger, f'/robot{robot_id}/drop',
+                lambda req, res, rid=robot_id: self.drop_callback(req, res, rid))
+
         self.publish_entities()
 
     def publish_entities(self):
@@ -93,7 +113,90 @@ class EntitySim(Node):
             marker.color = ColorRGBA(r=1.0, g=0.2, b=0.0, a=0.9)
             markers.markers.append(marker)
 
+        # Robots - green cubes
+        for i, (x, y) in enumerate(self.robot_positions):
+            marker = Marker()
+            marker.header.frame_id = 'map'
+            marker.header.stamp = timestamp
+            marker.ns = 'robots'
+            marker.id = i
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+            marker.pose.position.x = x * 0.05 + 0.025
+            marker.pose.position.y = y * 0.05 + 0.025
+            marker.pose.position.z = 0.5
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = 0.4
+            marker.scale.y = 0.4
+            marker.scale.z = 0.6
+            marker.color = ColorRGBA(r=0.0, g=0.8, b=0.0, a=0.9)
+            markers.markers.append(marker)
+
         self.entity_pub.publish(markers)
+
+    def move_callback(self, msg, id):
+        direction = msg.data.upper()
+        if id >= len(self.robot_positions):
+            return
+        x, y = self.robot_positions[id]
+        dx, dy = 0, 0
+        if direction == 'N':
+            dy = -1
+        elif direction == 'S':
+            dy = 1
+        elif direction == 'E':
+            dx = 1
+        elif direction == 'W':
+            dx = -1
+        else:
+            return
+
+        nx, ny = x + dx, y + dy
+        if not (0 <= nx < self.map_info.width and 0 <= ny < self.map_info.height):
+            return
+        idx = ny * self.map_info.width + nx
+        occupied = self.map_data[idx] > 50 or (nx, ny) in self.robot_positions or (nx, ny) in self.fire_positions or (self.carrying[id] and (nx, ny) in self.human_positions)
+        if not occupied:
+            self.robot_positions[id] = (nx, ny)
+            self.publish_entities()
+
+    def pick_callback(self, req, res, id):
+        res.success = False
+        if id >= len(self.robot_positions) or self.carrying[id]:
+            return res
+        rx, ry = self.robot_positions[id]
+        for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
+            nx, ny = rx + dx, ry + dy
+            if (nx, ny) in self.human_positions:
+                self.human_positions.remove((nx, ny))
+                self.carrying[id] = True
+                res.success = True
+                break
+        self.publish_entities()
+        return res
+
+    def remove_fire_callback(self, req, res, id):
+        res.success = False
+        if id >= len(self.robot_positions):
+            return res
+        pos = self.robot_positions[id]
+        if pos in self.fire_positions:
+            self.fire_positions.remove(pos)
+            res.success = True
+            self.publish_entities()
+        return res
+
+    def drop_callback(self, req, res, id):
+        res.success = False
+        if id >= len(self.robot_positions) or not self.carrying[id]:
+            return res
+        pos = self.robot_positions[id]
+        if pos not in self.human_positions and pos not in self.fire_positions and all(rp != pos for rp in self.robot_positions):
+            self.human_positions.append(pos)
+            self.carrying[id] = False
+            res.success = True
+            self.publish_entities()
+        return res
 
 
 def main(args=None):

@@ -5,6 +5,7 @@ from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 
 from nav_msgs.msg import OccupancyGrid
+from visualization_msgs.msg import MarkerArray
 
 import pygame
 import threading
@@ -20,6 +21,11 @@ class MapVisualizer(Node):
             '/map',
             self.map_callback,
             10)
+        self.entities_sub = self.create_subscription(
+            MarkerArray,
+            '/entities',
+            self.entities_callback,
+            10)
         self.map_data = None
         self.map_info = None
         self.cell_size = 25  # pixels per cell (2.5x bigger)
@@ -28,27 +34,28 @@ class MapVisualizer(Node):
         self.running = False
         self.human_positions = []
         self.fire_positions = []
+        self.robot_positions = []
 
     def map_callback(self, msg):
         self.map_data = msg.data
         self.map_info = msg.info
         self.get_logger().info(f'Received map: {msg.info.width}x{msg.info.height}')
 
-        # Place humans and fires on free cells (for visualization)
-        if not self.human_positions and not self.fire_positions:
-            free = []
-            width = msg.info.width
-            for y in range(msg.info.height):
-                for x in range(width):
-                    idx = y * width + x
-                    if idx < len(msg.data) and msg.data[idx] <= 0:
-                        free.append((x, y))
-            if len(free) > 8:
-                import random
-                random.shuffle(free)
-                self.human_positions = free[:5]
-                self.fire_positions = free[5:8]
-                self.get_logger().info(f'Visualizer placed {len(self.human_positions)} humans and {len(self.fire_positions)} fires')
+    def entities_callback(self, msg):
+        """Update all entities from MarkerArray published by entity_sim."""
+        self.human_positions = []
+        self.fire_positions = []
+        self.robot_positions = []
+        for marker in msg.markers:
+            x = int(marker.pose.position.x / 0.05)
+            y = int(marker.pose.position.y / 0.05)
+            if marker.ns == 'humans':
+                self.human_positions.append((x, y))
+            elif marker.ns == 'fires':
+                self.fire_positions.append((x, y))
+            elif marker.ns == 'robots':
+                self.robot_positions.append((x, y))
+        self.get_logger().debug(f'Updated entities: {len(self.human_positions)}H, {len(self.fire_positions)}F, {len(self.robot_positions)}R')
 
     def run_pygame(self):
         while self.map_info is None and rclpy.ok():
@@ -95,6 +102,12 @@ class MapVisualizer(Node):
                         pygame.draw.rect(self.screen, (255, 50, 0),
                                          (x * self.cell_size + 2, y * self.cell_size + 2,
                                           self.cell_size - 4, self.cell_size - 4))
+                    # Robots (green circles)
+                    for x, y in self.robot_positions:
+                        pygame.draw.circle(self.screen, (50, 255, 50),
+                                           (x * self.cell_size + self.cell_size//2,
+                                            y * self.cell_size + self.cell_size//2),
+                                           self.cell_size//2 - 2)
                     pygame.display.flip()
 
                 self.clock.tick(15)
