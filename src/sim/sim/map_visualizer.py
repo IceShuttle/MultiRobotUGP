@@ -185,6 +185,18 @@ class MapVisualizer(Node):
                         pygame.draw.circle(self.screen, color,
                                            (x * self.cell_size + self.cell_size//2,
                                             y * self.cell_size + self.cell_size//2), self.cell_size//2 - 2)
+                    # Rescue point (large green arrow)
+                    if hasattr(self, 'rescue_pos') and self.rescue_pos:
+                        x, y = self.rescue_pos
+                        cx = x * self.cell_size + self.cell_size // 2
+                        cy = y * self.cell_size + self.cell_size // 2
+                        points = [
+                            (cx, cy - 18),
+                            (cx - 15, cy + 15),
+                            (cx + 15, cy + 15)
+                        ]
+                        pygame.draw.polygon(self.screen, (0, 255, 0), points)
+                        pygame.draw.polygon(self.screen, (0, 0, 0), points, width=4)  # border
 
                 # Draw control panel on right
                 panel_x = self.map_info.width * self.cell_size

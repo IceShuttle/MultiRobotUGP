@@ -24,6 +24,7 @@ class EntitySim(Node):
         self.human_positions = []
         self.fire_positions = []
         self.robot_positions = []
+        self.rescue_pos = None
         self.carrying = [False] * 4
         self.destroyed = [False] * 4
         self.get_logger().info('EntitySim started. Waiting for map...')
@@ -42,14 +43,24 @@ class EntitySim(Node):
                 if self.map_data[y * width + x] <= 0:  # free
                     self.free_cells.append((x, y))
 
-        if len(self.free_cells) < 8:
-            self.get_logger().warn('Not enough free cells')
-            return
+        # Separate edge cells for robots
+        edge_cells = [(x, y) for x, y in self.free_cells if x == 0 or x == width-1 or y == 0 or y == height-1]
+        non_edge_cells = [(x, y) for x, y in self.free_cells if (x, y) not in edge_cells]
 
-        random.shuffle(self.free_cells)
-        self.human_positions = self.free_cells[:5]   # 5 humans
-        self.fire_positions = self.free_cells[5:8]   # 3 fires
-        self.robot_positions = self.free_cells[8:12] # 4 robots
+        # Scatter humans and fires in non-edge
+        random.shuffle(non_edge_cells)
+        self.human_positions = non_edge_cells[:5]   # 5 humans
+        self.fire_positions = non_edge_cells[5:8]   # 3 fires
+
+        # Robots at edges, or non-edge if not enough
+        random.shuffle(edge_cells)
+        self.robot_positions = edge_cells[:4]
+        if len(self.robot_positions) < 4:
+            needed = 4 - len(self.robot_positions)
+            self.robot_positions += non_edge_cells[8:8+needed]
+
+        # Rescue at hardcoded exit (14,7)
+        self.rescue_pos = (14, 7) if (14, 7) in self.free_cells else random.choice(self.free_cells)
 
         self.get_logger().info(f'Placed {len(self.human_positions)} humans, {len(self.fire_positions)} fires, {len(self.robot_positions)} robots on free cells')
 
@@ -140,6 +151,25 @@ class EntitySim(Node):
                 marker.color = ColorRGBA(r=0.0, g=0.8, b=0.0, a=0.9)  # green
             markers.markers.append(marker)
 
+        # Rescue point - green arrow
+        if self.rescue_pos:
+            marker = Marker()
+            marker.header.frame_id = 'map'
+            marker.header.stamp = timestamp
+            marker.ns = 'rescue'
+            marker.id = 0
+            marker.type = Marker.ARROW
+            marker.action = Marker.ADD
+            marker.pose.position.x = self.rescue_pos[0] * 0.05 + 0.025
+            marker.pose.position.y = self.rescue_pos[1] * 0.05 + 0.025
+            marker.pose.position.z = 0.2
+            marker.pose.orientation.w = 1.0  # pointing up, but arrow points in direction
+            marker.scale.x = 0.5  # shaft
+            marker.scale.y = 0.1  # head
+            marker.scale.z = 0.1
+            marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.9)
+            markers.markers.append(marker)
+
         self.entity_pub.publish(markers)
 
     def move_callback(self, msg, id):
@@ -211,11 +241,18 @@ class EntitySim(Node):
         pos = self.robot_positions[id]
         # Allow drop at current position (even if other conditions)
         if pos not in self.human_positions and pos not in self.fire_positions:
-            self.human_positions.append(pos)
-            self.carrying[id] = False
-            res.success = True
-            self.get_logger().info(f'Robot {id} dropped human at {pos}')
-            self.log_pub.publish(StringMsg(data=f'Robot {id} dropped a person'))
+            if pos == self.rescue_pos:
+                # Rescue the human
+                self.carrying[id] = False
+                res.success = True
+                self.get_logger().info(f'Robot {id} rescued a person at {pos}')
+                self.log_pub.publish(StringMsg(data=f'Robot {id} rescued a person'))
+            else:
+                self.human_positions.append(pos)
+                self.carrying[id] = False
+                res.success = True
+                self.get_logger().info(f'Robot {id} dropped human at {pos}')
+                self.log_pub.publish(StringMsg(data=f'Robot {id} dropped a person'))
             self.publish_entities()
         return res
 
