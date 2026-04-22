@@ -220,23 +220,21 @@ class EntitySim(Node):
         if self.destroyed[id] or id >= len(self.robot_positions) or not self.carrying[id]:
             return res
         pos = self.robot_positions[id]
-        # Check if on empty edge cell (exit)
         idx = pos[1] * self.map_info.width + pos[0]
         is_edge = (pos[0] == 0 or pos[0] == self.map_info.width-1 or pos[1] == 0 or pos[1] == self.map_info.height-1)
-        if is_edge and self.map_data[idx] <= 0 and pos not in self.human_positions and pos not in self.fire_positions:
-            # Rescue the human at exit
-            self.carrying[id] = False
-            res.success = True
-            self.get_logger().info(f'Robot {id} rescued a person at exit {pos}')
-            self.log_pub.publish(StringMsg(data=f'Robot {id} rescued a person'))
-        else:
-            # Normal drop (not at exit)
-            if pos not in self.human_positions and pos not in self.fire_positions:
-                self.human_positions.append(pos)
-                self.carrying[id] = False
-                res.success = True
-                self.get_logger().info(f'Robot {id} dropped human at {pos}')
-                self.log_pub.publish(StringMsg(data=f'Robot {id} dropped a person'))
+        if not is_edge:
+            self.get_logger().warn(f'Robot {id} cannot drop - not at edge cell')
+            return res
+        if self.map_data[idx] > 0:
+            self.get_logger().warn(f'Robot {id} cannot drop - obstacle at edge')
+            return res
+        if pos in self.human_positions or pos in self.fire_positions:
+            self.get_logger().warn(f'Robot {id} cannot drop - occupied at edge')
+            return res
+        self.carrying[id] = False
+        res.success = True
+        self.get_logger().info(f'Robot {id} rescued a person at exit {pos}')
+        self.log_pub.publish(StringMsg(data=f'Robot {id} rescued a person'))
         self.publish_entities()
         return res
 
