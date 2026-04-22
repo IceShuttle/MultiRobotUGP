@@ -25,39 +25,35 @@ class MapPublisher(Node):
         share_dir = get_package_share_directory('sim')
         csv_path = os.path.join(share_dir, 'map.csv')
         if not os.path.exists(csv_path):
-            self.get_logger().warn(f'Map file not found at {csv_path}. Create map.csv with x,y occupied points.')
+            self.get_logger().warn(f'Map file not found at {csv_path}')
             return
-        points = []
+
+        grid = []
         with open(csv_path, 'r') as f:
             reader = csv.reader(f)
             for row in reader:
-                if len(row) >= 2:
-                    try:
-                        x, y = float(row[0]), float(row[1])
-                        points.append((x, y))
-                    except ValueError:
-                        continue
-        if not points:
-            self.get_logger().warn('No valid points in CSV.')
+                if row:
+                    grid.append([int(float(x)) for x in row])
+
+        if not grid or not grid[0]:
+            self.get_logger().warn('Invalid map.csv')
             return
 
-        min_x = min(p[0] for p in points)
-        max_x = max(p[0] for p in points)
-        min_y = min(p[1] for p in points)
-        max_y = max(p[1] for p in points)
+        height = len(grid)
+        width = len(grid[0])
 
-        resolution = 0.05  # 5cm
-        width = int(math.ceil((max_x - min_x) / resolution)) + 1
-        height = int(math.ceil((max_y - min_y) / resolution)) + 1
+        # Verify all rows have same width
+        for row in grid:
+            if len(row) != width:
+                self.get_logger().error('All rows in CSV must have same length')
+                return
 
-        data = [0] * (width * height)
+        data = []
+        for row in grid:
+            for cell in row:
+                data.append(100 if cell == 1 else 0)
 
-        for x, y in points:
-            ix = int((x - min_x) / resolution)
-            iy = int((y - min_y) / resolution)
-            if 0 <= ix < width and 0 <= iy < height:
-                data[iy * width + ix] = 100
-
+        resolution = 0.05
         self.map_msg = OccupancyGrid()
         self.map_msg.header.frame_id = 'map'
         self.map_msg.header.stamp = self.get_clock().now().to_msg()
@@ -65,12 +61,12 @@ class MapPublisher(Node):
         self.map_msg.info.width = width
         self.map_msg.info.height = height
         self.map_msg.info.origin = Pose()
-        self.map_msg.info.origin.position.x = min_x - resolution / 2
-        self.map_msg.info.origin.position.y = min_y - resolution / 2
+        self.map_msg.info.origin.position.x = 0.0
+        self.map_msg.info.origin.position.y = 0.0
         self.map_msg.info.origin.position.z = 0.0
         self.map_msg.info.origin.orientation.w = 1.0
         self.map_msg.data = data
-        self.get_logger().info(f'Map loaded: {width}x{height} cells, {len(points)} obstacles.')
+        self.get_logger().info(f'Map loaded: {width}x{height} from CSV (resolution={resolution}m)')
 
     def publish_map(self):
         if self.map_msg is None:

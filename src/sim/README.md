@@ -1,1 +1,43 @@
-# sim package README\n\n## Map Publisher Node\n\nPublishes a static binary occupancy map (/map topic) generated from `map.csv`.\n\n### CSV Format\nPlace `map.csv` in the `sim` package root (src/sim/map.csv):\n- Each line: `x,y` (floats, meters, occupied obstacle points)\n- Example:\n```\n0.5,1.2\n1.0,2.3\n-0.2,0.8\n```\n\n### Build and Run\n```bash\ncolcon build --packages-select sim\nsource install/setup.bash\nros2 run sim map_publisher\n```\n\nMap grid: dynamic bounds from points, 0.05m resolution, origin at bottom-left cell center.\nBinary: 100=occupied, 0=free.
+# sim package
+
+## Nodes
+
+- `map_publisher`: Reads `map.csv` as binary grid and publishes `nav_msgs/OccupancyGrid` on `/map`
+- `map_visualizer`: Subscribes to `/map` and displays it using pygame (black=occupied, white=free)
+
+## CSV Format
+`src/sim/map.csv` must contain a **2D binary grid**:
+- Each line = one row of the map
+- Comma-separated values: `0` = free, `1` = occupied
+- All rows must have identical length
+
+**Example** (`15x15`):
+```
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,1,1,0,1,1,1,0,1,1,1,0,1,0,1
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+1,1,1,0,1,1,1,0,1,1,1,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,0,0,0,1,0,0,0,1,0,0,0,1,0,1
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+```
+
+**Result**: OccupancyGrid with `height=15`, `width=15`, resolution=`0.05m`, origin=`(0,0)`.
+
+## Usage
+```bash
+colcon build --packages-select sim
+source install/setup.bash
+ros2 run sim map_publisher &
+ros2 run sim map_visualizer
+```
+
+Close the pygame window to exit visualizer. Map is published every 5 seconds.

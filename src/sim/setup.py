@@ -11,7 +11,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml', 'map.csv']),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'pygame'],
     zip_safe=True,
     maintainer='shivang',
     maintainer_email='shivangso23@iitk.ac.in',
@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'map_publisher = sim.map_publisher:main',
+            'map_visualizer = sim.map_visualizer:main',
         ],
     },
 )
