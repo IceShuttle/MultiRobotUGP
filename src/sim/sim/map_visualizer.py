@@ -26,38 +26,58 @@ class MapVisualizer(Node):
         self.screen = None
         self.clock = None
         self.running = False
+        self.human_positions = []
+        self.fire_positions = []
 
     def map_callback(self, msg):
         self.map_data = msg.data
         self.map_info = msg.info
         self.get_logger().info(f'Received map: {msg.info.width}x{msg.info.height}')
 
+        # Place humans and fires on free cells (for visualization)
+        if not self.human_positions and not self.fire_positions:
+            free = []
+            width = msg.info.width
+            for y in range(msg.info.height):
+                for x in range(width):
+                    idx = y * width + x
+                    if idx < len(msg.data) and msg.data[idx] <= 0:
+                        free.append((x, y))
+            if len(free) > 8:
+                import random
+                random.shuffle(free)
+                self.human_positions = free[:5]
+                self.fire_positions = free[5:8]
+                self.get_logger().info(f'Visualizer placed {len(self.human_positions)} humans and {len(self.fire_positions)} fires')
+
     def run_pygame(self):
         while self.map_info is None and rclpy.ok():
             self.get_logger().info('Waiting for /map message...')
-            pygame.time.wait(500)
-            continue
+            pygame.time.wait(200)
 
-        if not rclpy.ok():
+        if self.map_info is None or not rclpy.ok():
             return
 
         try:
             pygame.init()
-            width_px = self.map_info.width * self.cell_size
-            height_px = self.map_info.height * self.cell_size
-            self.screen = pygame.display.set_mode((width_px, height_px))
+            w_px = self.map_info.width * self.cell_size
+            h_px = self.map_info.height * self.cell_size
+            self.screen = pygame.display.set_mode((w_px, h_px))
             pygame.display.set_caption('Map Visualizer')
             self.clock = pygame.time.Clock()
             self.running = True
-            self.get_logger().info(f'Pygame window opened ({width_px}x{height_px}). Close to quit.')
+            self.get_logger().info(f'Window opened ({w_px}x{h_px}). Close to quit.')
 
             while self.running and rclpy.ok():
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self.running = False
 
+                rclpy.spin_once(self, timeout_sec=0.01)
+
                 if self.map_data and self.map_info:
                     self.screen.fill((255, 255, 255))
+                    # Draw occupied (black)
                     for y in range(self.map_info.height):
                         for x in range(self.map_info.width):
                             idx = y * self.map_info.width + x
@@ -65,6 +85,16 @@ class MapVisualizer(Node):
                                 pygame.draw.rect(self.screen, (0, 0, 0),
                                                  (x * self.cell_size, y * self.cell_size,
                                                   self.cell_size, self.cell_size))
+                    # Humans (blue)
+                    for x, y in self.human_positions:
+                        pygame.draw.circle(self.screen, (0, 100, 255),
+                                           (x * self.cell_size + self.cell_size//2,
+                                            y * self.cell_size + self.cell_size//2), self.cell_size//2 - 2)
+                    # Fires (red rectangles)
+                    for x, y in self.fire_positions:
+                        pygame.draw.rect(self.screen, (255, 50, 0),
+                                         (x * self.cell_size + 2, y * self.cell_size + 2,
+                                          self.cell_size - 4, self.cell_size - 4))
                     pygame.display.flip()
 
                 self.clock.tick(15)

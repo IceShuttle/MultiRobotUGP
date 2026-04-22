@@ -2,8 +2,9 @@
 
 ## Nodes
 
-- `map_publisher`: Reads `map.csv` as binary grid and publishes `nav_msgs/OccupancyGrid` on `/map`
-- `map_visualizer`: Subscribes to `/map` and displays it using pygame (black=occupied, white=free)
+- `map_publisher`: Reads `map.csv` (grid of 0/1) → publishes `/map`
+- `entity_sim`: Subscribes to `/map`, randomly places 5 humans + 3 fires on free cells → publishes `/entities` (MarkerArray for RViz)
+- `map_visualizer`: Shows map + humans (blue circles) + fires (red circles) in pygame
 
 ## CSV Format
 `src/sim/map.csv` must contain a **2D binary grid**:
