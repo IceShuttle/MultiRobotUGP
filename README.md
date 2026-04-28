@@ -103,7 +103,3 @@ Robots can be controlled via ROS 2 topics and services:
 | `/robot{id}/pick` | `std_srvs/Trigger` | Pick human service |
 | `/robot{id}/remove_fire` | `std_srvs/Trigger` | Extinguish fire service |
 | `/robot{id}/drop` | `std_srvs/Trigger` | Drop human service |
-
-## License
-
-MIT
