@@ -11,6 +11,8 @@ scripts = ["install/setup.sh"]
 [tasks]
 build = { cmd="colcon build", inputs=["src"] }
 sim = { cmd="ros2 launch sim simulation_launch.py", depends-on=["build"]}
+solver = "ros2 run sim solver"
+resilient_solver = "ros2 run sim resilient_solver"
 
 [dependencies]
 ros-humble-desktop = ">=0.10.0,<0.11"

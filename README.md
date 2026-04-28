@@ -29,6 +29,14 @@ cd /home/shivang/Documents/Aerial/MultiRobotUGP
 colcon build --packages-select sim
 ```
 
+or alternatively install pixi with 
+
+``` bash
+curl -fsSL https://pixi.sh/install.sh | sh # If pixi is not installed
+pixi run build
+pixi run sim
+```
+
 ## Running the Simulation
 
 ### Method 1: Using the launch file (recommended)
@@ -45,6 +53,24 @@ source install/setup.bash
 ros2 run sim map_publisher &
 ros2 run sim entity_sim &
 ros2 run sim map_visualizer
+```
+
+### Running the controller
+
+#### Naive Solver
+``` bash
+ros2 run solver
+# or if used pixi
+pixi run solver
+```
+
+
+
+#### Resilient Solver
+``` bash
+ros2 run resilient_solver
+# or if used pixi
+pixi run resilient_solver
 ```
 
 ## Map Format
