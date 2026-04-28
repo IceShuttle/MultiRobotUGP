@@ -17,10 +17,12 @@ A ROS 2-based multi-robot simulation for aerial ground penetration tasks. The si
 
 ## Prerequisites
 
-- ROS 2 (Humble or later)
+- ROS 2 (Humble or later) 
 - Python 3.8+
 - pygame
 - colcon
+
+- or Ubuntu 22.04+ with just pixi
 
 ## Installation
 
@@ -34,25 +36,20 @@ or alternatively install pixi with
 ``` bash
 curl -fsSL https://pixi.sh/install.sh | sh # If pixi is not installed
 pixi run build
-pixi run sim
 ```
 
 ## Running the Simulation
 
-### Method 1: Using the launch file (recommended)
+### Method 1: Using the ros2 launch
 
 ```bash
 source install/setup.bash
 ros2 launch sim simulation_launch.py
 ```
 
-### Method 2: Running nodes individually
-
-```bash
-source install/setup.bash
-ros2 run sim map_publisher &
-ros2 run sim entity_sim &
-ros2 run sim map_visualizer
+### Method 2: Using pixi nodes individually
+``` bash
+pixi run sim
 ```
 
 ### Running the controller
