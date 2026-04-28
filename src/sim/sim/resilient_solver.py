@@ -81,6 +81,10 @@ class ResilientSolver(Node):
         # to abandon their current target mid-way.
         self.plan_version = 0
         self.prev_destroyed = [False] * NUM_ROBOTS
+        
+        # Track which edge cells robots are currently heading to for drop
+        # to avoid multiple robots targeting the same edge cell
+        self.drop_targets = [None] * NUM_ROBOTS
 
         self.lock = threading.Lock()
         self.started = False
@@ -143,6 +147,9 @@ class ResilientSolver(Node):
             # Start the destruction monitor
             m = threading.Thread(target=self.monitor_destruction, daemon=True)
             m.start()
+            # Start the load balance monitor to keep idle robots busy
+            lb = threading.Thread(target=self.monitor_load_balance, daemon=True)
+            lb.start()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -165,6 +172,71 @@ class ResilientSolver(Node):
                     if not self.is_wall(x, y):
                         cells.append((x, y))
         return cells
+
+    def get_edge_cells_by_side(self):
+        """Returns edge cells categorized by side: top, bottom, left, right.
+        This helps distribute robots across different edges to avoid congestion."""
+        w, h = self.map_info.width, self.map_info.height
+        edges = {'top': [], 'bottom': [], 'left': [], 'right': []}
+        for x in range(w):
+            for y in range(h):
+                if self.is_wall(x, y):
+                    continue
+                if y == 0:
+                    edges['top'].append((x, y))
+                elif y == h - 1:
+                    edges['bottom'].append((x, y))
+                elif x == 0:
+                    edges['left'].append((x, y))
+                elif x == w - 1:
+                    edges['right'].append((x, y))
+        return edges
+
+    def get_best_edge_for_robot(self, robot_id, current_pos):
+        """Select the best edge side for this robot to minimize congestion.
+        Considers which edges other robots are heading to."""
+        edges = self.get_edge_cells_by_side()
+        
+        # Count how many other robots are targeting each edge side
+        edge_load = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
+        w, h = self.map_info.width, self.map_info.height
+        
+        with self.lock:
+            for rid in range(NUM_ROBOTS):
+                if rid == robot_id or self.live_robot_destroyed[rid]:
+                    continue
+                target = self.drop_targets[rid]
+                if target is not None:
+                    tx, ty = target
+                    if ty == 0:
+                        edge_load['top'] += 1
+                    elif ty == h - 1:
+                        edge_load['bottom'] += 1
+                    elif tx == 0:
+                        edge_load['left'] += 1
+                    elif tx == w - 1:
+                        edge_load['right'] += 1
+        
+        # Score each edge: prefer less congested edges, but also consider distance
+        best_cells = []
+        for side, cells in edges.items():
+            if not cells:
+                continue
+            load = edge_load[side]
+            # Find closest cell on this edge
+            closest = min(cells, key=lambda c: self.euclidean(current_pos, c))
+            dist = self.euclidean(current_pos, closest)
+            # Score: lower is better (penalize load heavily)
+            score = dist + load * 10
+            best_cells.append((score, side, closest, cells))
+        
+        if not best_cells:
+            return self.get_edge_cells()  # fallback
+        
+        best_cells.sort(key=lambda x: x[0])
+        # Return all cells from the best edge side, sorted by distance
+        _, best_side, _, cells = best_cells[0]
+        return sorted(cells, key=lambda c: self.euclidean(current_pos, c))
 
     def alive_robot_ids(self):
         return [i for i in range(NUM_ROBOTS)
@@ -430,6 +502,88 @@ class ResilientSolver(Node):
 
         return assignments
 
+    def reassign_from_nearest_busy_robot(self, idle_robot_id):
+        """When a robot becomes idle, find the nearest busy robot and 
+        steal some of its assigned humans to keep the idle robot working.
+        
+        Returns True if reassignment was successful, False otherwise.
+        """
+        if self.live_robot_destroyed[idle_robot_id]:
+            return False
+            
+        idle_pos = self.live_robot_positions[idle_robot_id]
+        if idle_pos is None:
+            return False
+        
+        # Find all alive busy robots (robots with assigned humans)
+        busy_robots = []
+        for rid in range(NUM_ROBOTS):
+            if rid == idle_robot_id:
+                continue
+            if self.live_robot_destroyed[rid]:
+                continue
+            robot_pos = self.live_robot_positions[rid]
+            if robot_pos is None:
+                continue
+            # Check if this robot has humans assigned
+            with self.lock:
+                assigned_humans = list(self.assignments[rid])
+            # Filter to only humans still on the map
+            live = set(self.live_human_positions)
+            assigned_humans = [h for h in assigned_humans if h in live]
+            if len(assigned_humans) > 1:  # Only consider if they have >1 human (can share)
+                dist = self.euclidean(idle_pos, robot_pos)
+                busy_robots.append((dist, rid, assigned_humans))
+        
+        if not busy_robots:
+            return False
+        
+        # Sort by distance to find nearest busy robot
+        busy_robots.sort(key=lambda x: x[0])
+        nearest_dist, nearest_rid, nearest_humans = busy_robots[0]
+        
+        # From the nearest busy robot's assigned humans, find those closest to the idle robot
+        # and reassign approximately half of them (at least 1)
+        humans_to_steal = []
+        for h in nearest_humans:
+            dist_to_idle = self.euclidean(idle_pos, h)
+            dist_to_busy = self.euclidean(self.live_robot_positions[nearest_rid], h)
+            humans_to_steal.append((dist_to_idle, dist_to_busy, h))
+        
+        # Sort by distance to idle robot
+        humans_to_steal.sort(key=lambda x: x[0])
+        
+        # Steal humans that are closer to the idle robot, or at most half
+        num_to_steal = max(1, len(nearest_humans) // 2)
+        stolen_humans = []
+        for dist_idle, dist_busy, h in humans_to_steal:
+            if len(stolen_humans) >= num_to_steal:
+                break
+            # Prefer humans that are closer to idle robot than to busy robot
+            # but also take some even if farther to balance load
+            stolen_humans.append(h)
+        
+        if not stolen_humans:
+            return False
+        
+        # Perform the reassignment
+        with self.lock:
+            for h in stolen_humans:
+                if h in self.assignments[nearest_rid]:
+                    self.assignments[nearest_rid].remove(h)
+                if h not in self.assignments[idle_robot_id]:
+                    self.assignments[idle_robot_id].append(h)
+            # Bump plan version to signal workers about the change
+            self.plan_version += 1
+            version = self.plan_version
+        
+        self.get_logger().info(
+            f'[IDLE REASSIGN] Robot {idle_robot_id} was idle. '
+            f'Stole {len(stolen_humans)} humans from nearest busy Robot {nearest_rid} '
+            f'(distance={nearest_dist:.1f}). New plan v{version}')
+        
+        return True
+
     def compute_circle_assignments(self, remaining_humans):
         """Phase 2: grow circles around each alive robot until every
         remaining human is covered, then resolve overlaps by giving
@@ -543,6 +697,58 @@ class ResilientSolver(Node):
             else:
                 self.prev_destroyed = current
 
+    def monitor_load_balance(self):
+        """Periodically checks for load imbalance among alive robots.
+        If one robot has 0 tasks while another has multiple, triggers
+        reassignment to keep all robots busy."""
+        while rclpy.ok():
+            time.sleep(1.0)  # Check every second
+            
+            # Skip if no humans left
+            if not self.live_human_positions:
+                continue
+            
+            alive = self.alive_robot_ids()
+            if len(alive) < 2:
+                continue
+            
+            # Get current assignment counts (filtered by live humans)
+            live = set(self.live_human_positions)
+            load_info = []
+            for rid in alive:
+                with self.lock:
+                    assigned = [h for h in self.assignments[rid] if h in live]
+                robot_pos = self.live_robot_positions[rid]
+                load_info.append((rid, len(assigned), robot_pos))
+            
+            # Find idle robots (0 assignments) and busy robots (>1 assignments)
+            idle_robots = [(rid, pos) for rid, count, pos in load_info 
+                           if count == 0 and pos is not None]
+            busy_robots = [(rid, count, pos) for rid, count, pos in load_info 
+                           if count > 1 and pos is not None]
+            
+            # For each idle robot, try to reassign from nearest busy robot
+            for idle_rid, idle_pos in idle_robots:
+                if not busy_robots:
+                    break
+                    
+                # Find nearest busy robot
+                nearest = None
+                nearest_dist = float('inf')
+                for busy_rid, count, busy_pos in busy_robots:
+                    dist = self.euclidean(idle_pos, busy_pos)
+                    if dist < nearest_dist:
+                        nearest_dist = dist
+                        nearest = (busy_rid, count, busy_pos)
+                
+                if nearest:
+                    # Trigger reassignment
+                    self.reassign_from_nearest_busy_robot(idle_rid)
+                    # Update busy_robots list to reflect the change
+                    busy_robots = [(rid, c - 1, p) if rid == nearest[0] else (rid, c, p)
+                                   for rid, c, p in busy_robots]
+                    busy_robots = [(rid, c, p) for rid, c, p in busy_robots if c > 1]
+
     # ------------------------------------------------------------------
     # Solver entry point
     # ------------------------------------------------------------------
@@ -585,13 +791,24 @@ class ResilientSolver(Node):
                 my_humans = list(self.assignments[robot_id])
 
             if not my_humans:
-                # Maybe a re-plan will hand us humans later; wait briefly
-                # unless the simulation is effectively over.
+                # Robot is idle - try to steal work from nearest busy robot
+                # to keep this robot productive instead of waiting idle
+                if self.reassign_from_nearest_busy_robot(robot_id):
+                    # Successfully reassigned, continue to process new assignments
+                    continue
+                
+                # No reassignment possible - maybe a re-plan will hand us humans later
+                # Wait briefly unless the simulation is effectively over.
                 time.sleep(0.5)
                 with self.lock:
                     new_version = self.plan_version
                     new_humans = list(self.assignments[robot_id])
                 if new_version == version and not new_humans:
+                    # Check if there are still humans on the map
+                    if self.live_human_positions:
+                        # There are still humans - try reassignment one more time
+                        if self.reassign_from_nearest_busy_robot(robot_id):
+                            continue
                     # Nothing to do and no new plan -> exit worker
                     return
                 continue
@@ -606,6 +823,8 @@ class ResilientSolver(Node):
             if not my_humans:
                 with self.lock:
                     self.assignments[robot_id] = []
+                # Try to get work from nearest busy robot before looping back
+                self.reassign_from_nearest_busy_robot(robot_id)
                 continue
 
             # Go to nearest human
@@ -658,28 +877,53 @@ class ResilientSolver(Node):
                     self.assignments[robot_id].remove(target)
 
             # Head for a free edge cell to drop
-            edge_cells = self.get_edge_cells()
+            # Use smart edge selection to avoid congestion with other robots
             self.sync_robot_pos(robot_id)
             current = self.robot_pos[robot_id]
+            
+            # Get edges from the best side (least congested)
+            edge_cells = self.get_best_edge_for_robot(robot_id, current)
+            
+            # Filter out occupied cells and cells other robots are targeting
             with self.lock:
                 occupied = set(
                     p for i, p in enumerate(self.robot_pos)
                     if i != robot_id and p is not None)
+                # Also avoid cells that other robots are heading to
+                other_targets = set(
+                    self.drop_targets[i] for i in range(NUM_ROBOTS)
+                    if i != robot_id and self.drop_targets[i] is not None)
             occupied |= set(self.live_fire_positions)
             occupied |= set(self.live_human_positions)
+            occupied |= other_targets
             free_edges = [c for c in edge_cells if c not in occupied]
+
+            # If no free edges on best side, try all edges
+            if not free_edges:
+                all_edges = self.get_edge_cells()
+                free_edges = [c for c in all_edges if c not in occupied]
+                free_edges.sort(key=lambda e: self.euclidean(current, e))
 
             if not free_edges:
                 self.get_logger().warn(
                     f'Robot {robot_id}: no free edge cell for drop')
+                # Clear drop target and continue - might free up on next iteration
+                with self.lock:
+                    self.drop_targets[robot_id] = None
+                time.sleep(0.5)
                 continue
 
-            free_edges.sort(key=lambda e: self.euclidean(current, e))
-
             dropped = False
-            for drop_target in free_edges[:5]:
+            for drop_target in free_edges[:8]:  # Try more edges
                 if self.live_robot_destroyed[robot_id]:
+                    with self.lock:
+                        self.drop_targets[robot_id] = None
                     return
+                
+                # Register this drop target so other robots avoid it
+                with self.lock:
+                    self.drop_targets[robot_id] = drop_target
+                
                 # NOTE: we deliberately keep navigating to an edge even
                 # if a re-plan happens; dropping the carried human is
                 # always the right thing to do.
@@ -688,8 +932,29 @@ class ResilientSolver(Node):
                     self.get_logger().info(
                         f'Robot {robot_id} dropped at edge {drop_target}')
                     dropped = True
+                    with self.lock:
+                        self.drop_targets[robot_id] = None
                     break
+                else:
+                    # Navigation failed, refresh occupied set and try next edge
+                    with self.lock:
+                        occupied = set(
+                            p for i, p in enumerate(self.robot_pos)
+                            if i != robot_id and p is not None)
+                        other_targets = set(
+                            self.drop_targets[i] for i in range(NUM_ROBOTS)
+                            if i != robot_id and self.drop_targets[i] is not None)
+                    occupied |= set(self.live_fire_positions)
+                    occupied |= set(self.live_human_positions)
+                    occupied |= other_targets
+                    # Check if drop_target is now occupied
+                    if drop_target in occupied:
+                        continue  # Try next edge
 
+            # Clear drop target
+            with self.lock:
+                self.drop_targets[robot_id] = None
+                
             if not dropped:
                 self.get_logger().warn(
                     f'Robot {robot_id}: could not reach any edge for drop')

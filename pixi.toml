@@ -1,0 +1,19 @@
+[workspace]
+authors = ["Shivang <shivangso23@iitk.ac.in>"]
+channels = ["robostack-humble", "conda-forge"]
+name = "ugp"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[activation]
+scripts = ["install/setup.sh"]
+
+[tasks]
+build = { cmd="colcon build", inputs=["src"] }
+sim = { cmd="ros2 launch sim simulation_launch.py", depends-on=["build"]}
+
+[dependencies]
+ros-humble-desktop = ">=0.10.0,<0.11"
+colcon-common-extensions = ">=0.3.0,<0.4"
+setuptools = ">=82.0.1,<83"
+pygame = ">=2.6.1,<3"
