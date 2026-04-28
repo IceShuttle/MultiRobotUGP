@@ -4,6 +4,7 @@ Launch file for the complete simulation:
 - map_publisher: publishes the map from CSV
 - entity_sim: simulates entities (humans, fires, robots)
 - map_visualizer: visualizes the map and entities
+- viewer_3d: 3D visualization using PyVista
 """
 
 from launch import LaunchDescription
@@ -32,6 +33,14 @@ def generate_launch_description():
             package='sim',
             executable='map_visualizer',
             name='map_visualizer',
+            output='screen'
+        ),
+
+        # 3D Viewer Node
+        Node(
+            package='sim',
+            executable='viewer_3d',
+            name='viewer_3d',
             output='screen'
         ),
     ])
