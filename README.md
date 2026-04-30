@@ -4,6 +4,14 @@ A ROS 2-based multi-robot simulation for aerial ground penetration tasks. The si
 
 ![Simulation Screenshot](docs/screenshot.png)
 
+# Explainer Video
+
+
+
+https://github.com/user-attachments/assets/355cb92d-617f-4309-a253-786333d5b52d
+
+
+
 ## Features
 
 - **Map Publisher**: Reads occupancy grid from CSV and publishes to `/map` topic
